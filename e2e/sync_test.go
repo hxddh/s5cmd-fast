@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -10,8 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/fs"
@@ -1160,25 +1162,25 @@ func TestSyncS3BucketToS3BucketIsStorageClassChanging(t *testing.T) {
 	for _, sc := range storageClassesAndFile {
 
 		putObject := s3.PutObjectInput{
-			Bucket:       &srcbucket,
-			Key:          &sc.filename,
+			Bucket:       aws.String(srcbucket),
+			Key:          aws.String(sc.filename),
 			Body:         strings.NewReader(sc.content),
-			StorageClass: &sc.srcStorageClass,
+			StorageClass: types.StorageClass(sc.srcStorageClass),
 		}
 
-		_, err := s3client.PutObject(&putObject)
+		_, err := s3client.PutObject(context.Background(), &putObject)
 		if err != nil {
 			t.Fatalf("failed to put object in %v: %v", sc.srcStorageClass, err)
 		}
 
 		putObject = s3.PutObjectInput{
-			Bucket:       &dstbucket,
-			Key:          &sc.filename,
+			Bucket:       aws.String(dstbucket),
+			Key:          aws.String(sc.filename),
 			Body:         strings.NewReader(sc.content),
-			StorageClass: aws.String(sc.dstStorageClass),
+			StorageClass: types.StorageClass(sc.dstStorageClass),
 		}
 
-		_, err = s3client.PutObject(&putObject)
+		_, err = s3client.PutObject(context.Background(), &putObject)
 		if err != nil {
 			t.Fatalf("failed to put object in %v: %v", sc.dstStorageClass, err)
 		}
@@ -1242,13 +1244,13 @@ func TestSyncLocalFolderToS3BucketIsStorageClassChanging(t *testing.T) {
 	for _, sc := range storageClassesAndFile {
 
 		putObject := s3.PutObjectInput{
-			Bucket:       &bucket,
-			Key:          &sc.filename,
+			Bucket:       aws.String(bucket),
+			Key:          aws.String(sc.filename),
 			Body:         strings.NewReader(sc.content),
-			StorageClass: aws.String(sc.storageClass),
+			StorageClass: types.StorageClass(sc.storageClass),
 		}
 
-		_, err := s3client.PutObject(&putObject)
+		_, err := s3client.PutObject(context.Background(), &putObject)
 		if err != nil {
 			t.Fatalf("failed to put object in %v: %v", sc.storageClass, err)
 		}
@@ -1308,13 +1310,13 @@ func TestSyncS3BucketToLocalFolderIsStorageClassChanging(t *testing.T) {
 	for _, sc := range storageClassesAndFile {
 
 		putObject := s3.PutObjectInput{
-			Bucket:       &bucket,
-			Key:          &sc.filename,
+			Bucket:       aws.String(bucket),
+			Key:          aws.String(sc.filename),
 			Body:         strings.NewReader(sc.content),
-			StorageClass: aws.String(sc.storageClass),
+			StorageClass: types.StorageClass(sc.storageClass),
 		}
 
-		_, err := s3client.PutObject(&putObject)
+		_, err := s3client.PutObject(context.Background(), &putObject)
 		if err != nil {
 			t.Fatalf("failed to put object in %v: %v", sc.storageClass, err)
 		}
@@ -1386,13 +1388,13 @@ func TestSyncS3BucketToS3BucketIsStorageClassChangingWithDifferentSizeAndContent
 		putFile(t, s3client, srcbucket, sc.filename, sc.srcContent, putStorageClass(sc.srcStorageClass))
 
 		putObject := s3.PutObjectInput{
-			Bucket:       &dstbucket,
-			Key:          &sc.filename,
+			Bucket:       aws.String(dstbucket),
+			Key:          aws.String(sc.filename),
 			Body:         strings.NewReader(sc.dstContent),
-			StorageClass: aws.String(sc.dstStorageClass),
+			StorageClass: types.StorageClass(sc.dstStorageClass),
 		}
 
-		_, err := s3client.PutObject(&putObject)
+		_, err := s3client.PutObject(context.Background(), &putObject)
 		if err != nil {
 			t.Fatalf("failed to put object in %v: %v", sc.dstStorageClass, err)
 		}

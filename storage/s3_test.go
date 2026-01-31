@@ -5,33 +5,160 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math/rand"
-	"net/http"
-	"net/http/httptest"
 	urlpkg "net/url"
 	"os"
-	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/awsutil"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/awstesting/unit"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"github.com/google/go-cmp/cmp"
 	"gotest.tools/v3/assert"
 
 	"github.com/peak/s5cmd/v2/log"
 	"github.com/peak/s5cmd/v2/storage/url"
 )
+
+type mockS3API struct {
+	HeadObjectFn          func(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	ListObjectVersionsFn  func(ctx context.Context, params *s3.ListObjectVersionsInput, optFns ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error)
+	ListObjectsV2Fn       func(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+	ListObjectsFn         func(ctx context.Context, params *s3.ListObjectsInput, optFns ...func(*s3.Options)) (*s3.ListObjectsOutput, error)
+	CopyObjectFn          func(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error)
+	GetObjectFn           func(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	SelectObjectContentFn func(ctx context.Context, params *s3.SelectObjectContentInput, optFns ...func(*s3.Options)) (*s3.SelectObjectContentOutput, error)
+	DeleteObjectFn        func(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	DeleteObjectsFn       func(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error)
+	ListBucketsFn         func(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error)
+	CreateBucketFn        func(ctx context.Context, params *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error)
+	DeleteBucketFn        func(ctx context.Context, params *s3.DeleteBucketInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketOutput, error)
+	PutBucketVersioningFn func(ctx context.Context, params *s3.PutBucketVersioningInput, optFns ...func(*s3.Options)) (*s3.PutBucketVersioningOutput, error)
+	GetBucketVersioningFn func(ctx context.Context, params *s3.GetBucketVersioningInput, optFns ...func(*s3.Options)) (*s3.GetBucketVersioningOutput, error)
+	HeadBucketFn          func(ctx context.Context, params *s3.HeadBucketInput, optFns ...func(*s3.Options)) (*s3.HeadBucketOutput, error)
+	GetBucketLocationFn   func(ctx context.Context, params *s3.GetBucketLocationInput, optFns ...func(*s3.Options)) (*s3.GetBucketLocationOutput, error)
+}
+
+func (m mockS3API) HeadObject(ctx context.Context, params *s3.HeadObjectInput, optFns ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+	if m.HeadObjectFn != nil {
+		return m.HeadObjectFn(ctx, params, optFns...)
+	}
+	return &s3.HeadObjectOutput{}, nil
+}
+
+func (m mockS3API) ListObjectVersions(ctx context.Context, params *s3.ListObjectVersionsInput, optFns ...func(*s3.Options)) (*s3.ListObjectVersionsOutput, error) {
+	if m.ListObjectVersionsFn != nil {
+		return m.ListObjectVersionsFn(ctx, params, optFns...)
+	}
+	return &s3.ListObjectVersionsOutput{}, nil
+}
+
+func (m mockS3API) ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	if m.ListObjectsV2Fn != nil {
+		return m.ListObjectsV2Fn(ctx, params, optFns...)
+	}
+	return &s3.ListObjectsV2Output{}, nil
+}
+
+func (m mockS3API) ListObjects(ctx context.Context, params *s3.ListObjectsInput, optFns ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+	if m.ListObjectsFn != nil {
+		return m.ListObjectsFn(ctx, params, optFns...)
+	}
+	return &s3.ListObjectsOutput{}, nil
+}
+
+func (m mockS3API) CopyObject(ctx context.Context, params *s3.CopyObjectInput, optFns ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+	if m.CopyObjectFn != nil {
+		return m.CopyObjectFn(ctx, params, optFns...)
+	}
+	return &s3.CopyObjectOutput{}, nil
+}
+
+func (m mockS3API) GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	if m.GetObjectFn != nil {
+		return m.GetObjectFn(ctx, params, optFns...)
+	}
+	return &s3.GetObjectOutput{}, nil
+}
+
+func (m mockS3API) SelectObjectContent(ctx context.Context, params *s3.SelectObjectContentInput, optFns ...func(*s3.Options)) (*s3.SelectObjectContentOutput, error) {
+	if m.SelectObjectContentFn != nil {
+		return m.SelectObjectContentFn(ctx, params, optFns...)
+	}
+	return &s3.SelectObjectContentOutput{}, nil
+}
+
+func (m mockS3API) DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	if m.DeleteObjectFn != nil {
+		return m.DeleteObjectFn(ctx, params, optFns...)
+	}
+	return &s3.DeleteObjectOutput{}, nil
+}
+
+func (m mockS3API) DeleteObjects(ctx context.Context, params *s3.DeleteObjectsInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectsOutput, error) {
+	if m.DeleteObjectsFn != nil {
+		return m.DeleteObjectsFn(ctx, params, optFns...)
+	}
+	return &s3.DeleteObjectsOutput{}, nil
+}
+
+func (m mockS3API) ListBuckets(ctx context.Context, params *s3.ListBucketsInput, optFns ...func(*s3.Options)) (*s3.ListBucketsOutput, error) {
+	if m.ListBucketsFn != nil {
+		return m.ListBucketsFn(ctx, params, optFns...)
+	}
+	return &s3.ListBucketsOutput{}, nil
+}
+
+func (m mockS3API) CreateBucket(ctx context.Context, params *s3.CreateBucketInput, optFns ...func(*s3.Options)) (*s3.CreateBucketOutput, error) {
+	if m.CreateBucketFn != nil {
+		return m.CreateBucketFn(ctx, params, optFns...)
+	}
+	return &s3.CreateBucketOutput{}, nil
+}
+
+func (m mockS3API) DeleteBucket(ctx context.Context, params *s3.DeleteBucketInput, optFns ...func(*s3.Options)) (*s3.DeleteBucketOutput, error) {
+	if m.DeleteBucketFn != nil {
+		return m.DeleteBucketFn(ctx, params, optFns...)
+	}
+	return &s3.DeleteBucketOutput{}, nil
+}
+
+func (m mockS3API) PutBucketVersioning(ctx context.Context, params *s3.PutBucketVersioningInput, optFns ...func(*s3.Options)) (*s3.PutBucketVersioningOutput, error) {
+	if m.PutBucketVersioningFn != nil {
+		return m.PutBucketVersioningFn(ctx, params, optFns...)
+	}
+	return &s3.PutBucketVersioningOutput{}, nil
+}
+
+func (m mockS3API) GetBucketVersioning(ctx context.Context, params *s3.GetBucketVersioningInput, optFns ...func(*s3.Options)) (*s3.GetBucketVersioningOutput, error) {
+	if m.GetBucketVersioningFn != nil {
+		return m.GetBucketVersioningFn(ctx, params, optFns...)
+	}
+	return &s3.GetBucketVersioningOutput{}, nil
+}
+
+func (m mockS3API) HeadBucket(ctx context.Context, params *s3.HeadBucketInput, optFns ...func(*s3.Options)) (*s3.HeadBucketOutput, error) {
+	if m.HeadBucketFn != nil {
+		return m.HeadBucketFn(ctx, params, optFns...)
+	}
+	return &s3.HeadBucketOutput{}, nil
+}
+
+type mockUploader struct {
+	UploadFn func(ctx context.Context, input *manager.UploadInput, optFns ...func(*manager.Uploader)) (*manager.UploadOutput, error)
+}
+
+func (m mockUploader) Upload(ctx context.Context, input *manager.UploadInput, optFns ...func(*manager.Uploader)) (*manager.UploadOutput, error) {
+	if m.UploadFn != nil {
+		return m.UploadFn(ctx, input, optFns...)
+	}
+	return &manager.UploadOutput{}, nil
+}
 
 func TestS3ImplementsStorageInterface(t *testing.T) {
 	var i interface{} = new(S3)
@@ -81,13 +208,7 @@ func TestNewSessionPathStyle(t *testing.T) {
 	for _, tc := range testcases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			opts := Options{Endpoint: tc.endpoint.String()}
-			sess, err := globalSessionCache.newSession(context.Background(), opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			got := aws.BoolValue(sess.Config.S3ForcePathStyle)
+			got := !isVirtualHostStyle(tc.endpoint)
 			if got != tc.expectPathStyle {
 				t.Fatalf("expected: %v, got: %v", tc.expectPathStyle, got)
 			}
@@ -103,12 +224,12 @@ func TestNewSessionWithRegionSetViaEnv(t *testing.T) {
 	os.Setenv("AWS_REGION", expectedRegion)
 	defer os.Unsetenv("AWS_REGION")
 
-	sess, err := globalSessionCache.newSession(context.Background(), Options{})
+	cfg, err := globalSessionCache.newSession(context.Background(), Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := aws.StringValue(sess.Config.Region)
+	got := cfg.Region
 	if got != expectedRegion {
 		t.Fatalf("expected %v, got %v", expectedRegion, got)
 	}
@@ -117,18 +238,19 @@ func TestNewSessionWithRegionSetViaEnv(t *testing.T) {
 func TestNewSessionWithNoSignRequest(t *testing.T) {
 	globalSessionCache.clear()
 
-	sess, err := globalSessionCache.newSession(context.Background(), Options{
+	cfg, err := globalSessionCache.newSession(context.Background(), Options{
 		NoSignRequest: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	got := sess.Config.Credentials
-	expected := credentials.AnonymousCredentials
-
-	if expected != got {
-		t.Fatalf("expected %v, got %v", expected, got)
+	creds, err := cfg.Credentials.Retrieve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if creds.Source != "AnonymousCredentials" {
+		t.Fatalf("expected %v, got %v", "AnonymousCredentials", creds.Source)
 	}
 }
 
@@ -189,7 +311,7 @@ aws_secret_access_key = p2_profile_access_key`
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			globalSessionCache.clear()
-			sess, err := globalSessionCache.newSession(context.Background(), Options{
+			cfg, err := globalSessionCache.newSession(context.Background(), Options{
 				Profile:        tc.profileName,
 				CredentialFile: tc.fileName,
 			})
@@ -197,7 +319,7 @@ aws_secret_access_key = p2_profile_access_key`
 				t.Fatal(err)
 			}
 
-			got, err := sess.Config.Credentials.Get()
+			got, err := cfg.Credentials.Retrieve(context.Background())
 			if err != nil {
 				// if there should be such a profile but received an error fail,
 				// ignore the error otherwise.
@@ -219,27 +341,22 @@ func TestS3ListURL(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	mockAPI := s3.New(unit.Session)
-	mockS3 := &S3{
-		api: mockAPI,
+	mockAPI := mockS3API{
+		ListObjectsV2Fn: func(ctx context.Context, params *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+			return &s3.ListObjectsV2Output{
+				CommonPrefixes: []types.CommonPrefix{
+					{Prefix: aws.String("key/a/")},
+					{Prefix: aws.String("key/b/")},
+				},
+				Contents: []types.Object{
+					{Key: aws.String("key/test.txt")},
+					{Key: aws.String("key/test.pdf")},
+				},
+				IsTruncated: aws.Bool(false),
+			}, nil
+		},
 	}
-
-	mockAPI.Handlers.Send.Clear()
-	mockAPI.Handlers.Unmarshal.Clear()
-	mockAPI.Handlers.UnmarshalMeta.Clear()
-	mockAPI.Handlers.ValidateResponse.Clear()
-	mockAPI.Handlers.Unmarshal.PushBack(func(r *request.Request) {
-		r.Data = &s3.ListObjectsV2Output{
-			CommonPrefixes: []*s3.CommonPrefix{
-				{Prefix: aws.String("key/a/")},
-				{Prefix: aws.String("key/b/")},
-			},
-			Contents: []*s3.Object{
-				{Key: aws.String("key/test.txt")},
-				{Key: aws.String("key/test.pdf")},
-			},
-		}
-	})
+	mockS3 := &S3{api: mockAPI}
 
 	responses := []struct {
 		isDir  bool
@@ -295,18 +412,13 @@ func TestS3ListError(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	mockAPI := s3.New(unit.Session)
-	mockS3 := &S3{
-		api: mockAPI,
-	}
 	mockErr := fmt.Errorf("mock error")
-
-	mockAPI.Handlers.Unmarshal.Clear()
-	mockAPI.Handlers.UnmarshalMeta.Clear()
-	mockAPI.Handlers.ValidateResponse.Clear()
-	mockAPI.Handlers.Send.PushBack(func(r *request.Request) {
-		r.Error = mockErr
-	})
+	mockAPI := mockS3API{
+		ListObjectsV2Fn: func(ctx context.Context, params *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+			return nil, mockErr
+		},
+	}
+	mockS3 := &S3{api: mockAPI}
 
 	for got := range mockS3.List(context.Background(), url, true) {
 		if got.Err != mockErr {
@@ -321,28 +433,23 @@ func TestS3ListNoItemFound(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	mockAPI := s3.New(unit.Session)
-	mockS3 := &S3{
-		api: mockAPI,
+	mockAPI := mockS3API{
+		ListObjectsV2Fn: func(ctx context.Context, params *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+			// output does not include keys that match with given key
+			return &s3.ListObjectsV2Output{
+				CommonPrefixes: []types.CommonPrefix{
+					{Prefix: aws.String("anotherkey/a/")},
+					{Prefix: aws.String("anotherkey/b/")},
+				},
+				Contents: []types.Object{
+					{Key: aws.String("a/b/c/d/test.txt")},
+					{Key: aws.String("unknown/test.pdf")},
+				},
+				IsTruncated: aws.Bool(false),
+			}, nil
+		},
 	}
-
-	mockAPI.Handlers.Send.Clear()
-	mockAPI.Handlers.Unmarshal.Clear()
-	mockAPI.Handlers.UnmarshalMeta.Clear()
-	mockAPI.Handlers.ValidateResponse.Clear()
-	mockAPI.Handlers.Unmarshal.PushBack(func(r *request.Request) {
-		// output does not include keys that match with given key
-		r.Data = &s3.ListObjectsV2Output{
-			CommonPrefixes: []*s3.CommonPrefix{
-				{Prefix: aws.String("anotherkey/a/")},
-				{Prefix: aws.String("anotherkey/b/")},
-			},
-			Contents: []*s3.Object{
-				{Key: aws.String("a/b/c/d/test.txt")},
-				{Key: aws.String("unknown/test.pdf")},
-			},
-		}
-	})
+	mockS3 := &S3{api: mockAPI}
 
 	for got := range mockS3.List(context.Background(), url, true) {
 		if got.Err != ErrNoObjectFound {
@@ -357,226 +464,37 @@ func TestS3ListContextCancelled(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	mockAPI := s3.New(unit.Session)
-	mockS3 := &S3{
-		api: mockAPI,
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-
-	mockAPI.Handlers.Unmarshal.Clear()
-	mockAPI.Handlers.UnmarshalMeta.Clear()
-	mockAPI.Handlers.ValidateResponse.Clear()
-	mockAPI.Handlers.Unmarshal.PushBack(func(r *request.Request) {
-		r.Data = &s3.ListObjectsV2Output{
-			CommonPrefixes: []*s3.CommonPrefix{
-				{Prefix: aws.String("key/a/")},
-			},
-		}
-	})
+	mockAPI := mockS3API{
+		ListObjectsV2Fn: func(ctx context.Context, params *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return &s3.ListObjectsV2Output{
+				CommonPrefixes: []types.CommonPrefix{
+					{Prefix: aws.String("key/a/")},
+				},
+				IsTruncated: aws.Bool(false),
+			}, nil
+		},
+	}
+	mockS3 := &S3{api: mockAPI}
 
 	for got := range mockS3.List(ctx, url, true) {
-		reqErr, ok := got.Err.(awserr.Error)
-		if !ok {
-			t.Errorf("could not convert error")
-			continue
-		}
-
-		if reqErr.Code() != request.CanceledErrorCode {
+		if !errors.Is(got.Err, context.Canceled) {
 			t.Errorf("error got = %v, want %v", got.Err, context.Canceled)
-			continue
 		}
-	}
-}
-
-func TestS3Retry(t *testing.T) {
-	log.Init("debug", false)
-
-	testcases := []struct {
-		name          string
-		err           error
-		expectedRetry int
-	}{
-		// Internal error
-		{
-			name:          "InternalError",
-			err:           awserr.New("InternalError", "internal error", nil),
-			expectedRetry: 5,
-		},
-
-		// Request errors
-		{
-			name:          "RequestError",
-			err:           awserr.New(request.ErrCodeRequestError, "request error", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "UseOfClosedNetworkConnection",
-			err:           awserr.New(request.ErrCodeRequestError, "use of closed network connection", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "ConnectionResetByPeer",
-			err:           awserr.New(request.ErrCodeRequestError, "connection reset by peer", nil),
-			expectedRetry: 5,
-		},
-		{
-			name: "RequestFailureRequestError",
-			err: awserr.NewRequestFailure(
-				awserr.New(request.ErrCodeRequestError, "request failure: request error", nil),
-				400,
-				"0",
-			),
-			expectedRetry: 5,
-		},
-		{
-			name:          "RequestTimeout",
-			err:           awserr.New("RequestTimeout", "request timeout", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "ResponseTimeout",
-			err:           awserr.New(request.ErrCodeResponseTimeout, "response timeout", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "RequestTimeTooSkewed",
-			err:           awserr.New("RequestTimeTooSkewed", "The difference between the request time and the server's time is too large.", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "SlowDown",
-			err:           awserr.New("SlowDown", "Please reduce your request rate.", nil),
-			expectedRetry: 5,
-		},
-
-		// Throttling errors
-		{
-			name:          "ProvisionedThroughputExceededException",
-			err:           awserr.New("ProvisionedThroughputExceededException", "provisioned throughput exceeded exception", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "Throttling",
-			err:           awserr.New("Throttling", "throttling", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "ThrottlingException",
-			err:           awserr.New("ThrottlingException", "throttling exception", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "RequestLimitExceeded",
-			err:           awserr.New("RequestLimitExceeded", "request limit exceeded", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "RequestThrottled",
-			err:           awserr.New("RequestThrottled", "request throttled", nil),
-			expectedRetry: 5,
-		},
-		{
-			name:          "RequestThrottledException",
-			err:           awserr.New("RequestThrottledException", "request throttled exception", nil),
-			expectedRetry: 5,
-		},
-
-		// Expired credential errors
-		{
-			name:          "ExpiredToken",
-			err:           awserr.New("ExpiredToken", "expired token", nil),
-			expectedRetry: 0,
-		},
-		{
-			name:          "ExpiredTokenException",
-			err:           awserr.New("ExpiredTokenException", "expired token exception", nil),
-			expectedRetry: 0,
-		},
-
-		// Invalid Token errors
-		{
-			name:          "InvalidToken",
-			err:           awserr.New("InvalidToken", "invalid token", nil),
-			expectedRetry: 0,
-		},
-
-		// Connection errors
-		{
-			name:          "ConnectionReset",
-			err:           fmt.Errorf("connection reset by peer"),
-			expectedRetry: 5,
-		},
-		{
-			name:          "ConnectionTimedOut",
-			err:           awserr.New(request.ErrCodeRequestError, "", tempError{err: errors.New("connection timed out")}),
-			expectedRetry: 5,
-		},
-		{
-			name:          "BrokenPipe",
-			err:           fmt.Errorf("broken pipe"),
-			expectedRetry: 5,
-		},
-
-		// Unknown errors
-		{
-			name:          "UnknownSDKError",
-			err:           fmt.Errorf("an error that is not known to the SDK"),
-			expectedRetry: 5,
-		},
-	}
-
-	url, err := url.New("s3://bucket/key")
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
-	}
-
-	const expectedRetry = 5
-	for _, tc := range testcases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			sess := unit.Session
-			sess.Config.Retryer = newCustomRetryer(expectedRetry)
-
-			mockAPI := s3.New(sess)
-			mockS3 := &S3{
-				api: mockAPI,
-			}
-
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			mockAPI.Handlers.Send.Clear()
-			mockAPI.Handlers.Unmarshal.Clear()
-			mockAPI.Handlers.UnmarshalMeta.Clear()
-			mockAPI.Handlers.ValidateResponse.Clear()
-			mockAPI.Handlers.Unmarshal.PushBack(func(r *request.Request) {
-				r.Error = tc.err
-				r.HTTPResponse = &http.Response{}
-			})
-
-			retried := -1
-			// Add a request handler to the AfterRetry handler stack that is used by the
-			// SDK to be executed after the SDK has determined if it will retry.
-			mockAPI.Handlers.AfterRetry.PushBack(func(_ *request.Request) {
-				retried++
-			})
-
-			for range mockS3.List(ctx, url, true) {
-			}
-
-			if retried != tc.expectedRetry {
-				t.Errorf("expected retry %v, got %v", tc.expectedRetry, retried)
-			}
-		})
 	}
 }
 
 func TestS3RetryOnNoSuchUpload(t *testing.T) {
 	log.Init("debug", false)
 
-	noSuchUploadError := awserr.New(s3.ErrCodeNoSuchUpload, "The specified upload does not exist. The upload ID may be invalid, or the upload may have been aborted or completed. status code: 404, request id: PJXXXXX, host id: HOSTIDXX", nil)
+	noSuchUploadError := &smithy.GenericAPIError{
+		Code:    "NoSuchUpload",
+		Message: "The specified upload does not exist.",
+	}
 	testcases := []struct {
 		name       string
 		err        error
@@ -605,15 +523,19 @@ func TestS3RetryOnNoSuchUpload(t *testing.T) {
 	for _, tc := range testcases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			mockAPI := s3.New(unit.Session)
+			uploadAttempts := int32(0)
+			mockAPI := mockS3API{
+				HeadObjectFn: func(ctx context.Context, params *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+					return nil, &smithy.GenericAPIError{Code: "NotFound", Message: "not found"}
+				},
+			}
 			mockS3 := &S3{
 				api: mockAPI,
-				uploader: &s3manager.Uploader{
-					S3:                mockAPI,
-					PartSize:          s3manager.DefaultUploadPartSize,
-					Concurrency:       s3manager.DefaultUploadConcurrency,
-					LeavePartsOnError: false,
-					MaxUploadParts:    s3manager.MaxUploadParts,
+				uploader: mockUploader{
+					UploadFn: func(ctx context.Context, input *manager.UploadInput, _ ...func(*manager.Uploader)) (*manager.UploadOutput, error) {
+						atomic.AddInt32(&uploadAttempts, 1)
+						return nil, tc.err
+					},
 				},
 				noSuchUploadRetryCount: int(tc.retryCount),
 			}
@@ -621,30 +543,11 @@ func TestS3RetryOnNoSuchUpload(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 
-			atomicCounter := new(int32)
-			atomic.StoreInt32(atomicCounter, 0)
+			mockS3.Put(ctx, strings.NewReader(""), url, Metadata{}, manager.DefaultUploadConcurrency, manager.DefaultUploadPartSize)
 
-			mockAPI.Handlers.Send.Clear()
-			mockAPI.Handlers.Unmarshal.Clear()
-			mockAPI.Handlers.UnmarshalMeta.Clear()
-			mockAPI.Handlers.ValidateResponse.Clear()
-			mockAPI.Handlers.Unmarshal.PushBack(func(r *request.Request) {
-				r.Error = tc.err
-				r.HTTPResponse = &http.Response{}
-			})
-			mockAPI.Handlers.Unmarshal.PushBack(func(r *request.Request) {
-				atomic.AddInt32(atomicCounter, 1)
-			})
-
-			mockS3.Put(ctx, strings.NewReader(""), url, Metadata{}, s3manager.DefaultUploadConcurrency, s3manager.DefaultUploadPartSize)
-
-			// +1 is for the original request
-			// *2 is to account for the "Stat" requests that are made to obtain
-			// retry code from object metada.
-			want := 2*tc.retryCount + 1
-			counter := atomic.LoadInt32(atomicCounter)
-			if counter != want {
-				t.Errorf("expected retry request count %d, got %d", want, counter)
+			want := tc.retryCount + 1
+			if got := atomic.LoadInt32(&uploadAttempts); got != want {
+				t.Errorf("expected upload attempts %d, got %d", want, got)
 			}
 		})
 	}
@@ -696,50 +599,14 @@ func TestS3CopyEncryptionRequest(t *testing.T) {
 	for _, tc := range testcases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			mockAPI := s3.New(unit.Session)
-
-			mockAPI.Handlers.Unmarshal.Clear()
-			mockAPI.Handlers.UnmarshalMeta.Clear()
-			mockAPI.Handlers.UnmarshalError.Clear()
-			mockAPI.Handlers.Send.Clear()
-
-			mockAPI.Handlers.Send.PushBack(func(r *request.Request) {
-				r.HTTPResponse = &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader("")),
-				}
-
-				params := r.Params
-				sse := valueAtPath(params, "ServerSideEncryption")
-				key := valueAtPath(params, "SSEKMSKeyId")
-
-				if !(sse == nil && tc.expectedSSE == "") {
-					assert.Equal(t, sse, tc.expectedSSE)
-				}
-				if !(key == nil && tc.expectedSSEKeyID == "") {
-					assert.Equal(t, key, tc.expectedSSEKeyID)
-				}
-
-				aclVal := valueAtPath(r.Params, "ACL")
-
-				if aclVal == nil && tc.expectedACL == "" {
-					return
-				}
-				assert.Equal(t, aclVal, tc.expectedACL)
-			})
-			mockAPI.Handlers.Unmarshal.PushBack(func(r *request.Request) {
-				if r.Error != nil {
-					if awsErr, ok := r.Error.(awserr.Error); ok {
-						if awsErr.Code() == request.ErrCodeSerialization {
-							r.Error = nil
-						}
-					}
-				}
-			})
-
-			mockS3 := &S3{
-				api: mockAPI,
+			var captured *s3.CopyObjectInput
+			mockAPI := mockS3API{
+				CopyObjectFn: func(ctx context.Context, params *s3.CopyObjectInput, _ ...func(*s3.Options)) (*s3.CopyObjectOutput, error) {
+					captured = params
+					return &s3.CopyObjectOutput{}, nil
+				},
 			}
+			mockS3 := &S3{api: mockAPI}
 
 			metadata := Metadata{}
 			metadata.EncryptionMethod = tc.sse
@@ -749,6 +616,24 @@ func TestS3CopyEncryptionRequest(t *testing.T) {
 			err = mockS3.Copy(context.Background(), u, u, metadata)
 			if err != nil {
 				t.Errorf("Expected %v, but received %q", nil, err)
+			}
+
+			if tc.expectedSSE == "" {
+				assert.Equal(t, types.ServerSideEncryption(""), captured.ServerSideEncryption)
+			} else {
+				assert.Equal(t, types.ServerSideEncryption(tc.expectedSSE), captured.ServerSideEncryption)
+			}
+
+			if tc.expectedSSEKeyID == "" {
+				assert.Equal(t, (*string)(nil), captured.SSEKMSKeyId)
+			} else {
+				assert.Equal(t, tc.expectedSSEKeyID, aws.ToString(captured.SSEKMSKeyId))
+			}
+
+			if tc.expectedACL == "" {
+				assert.Equal(t, types.ObjectCannedACL(""), captured.ACL)
+			} else {
+				assert.Equal(t, types.ObjectCannedACL(tc.expectedACL), captured.ACL)
 			}
 		})
 	}
@@ -798,40 +683,14 @@ func TestS3PutEncryptionRequest(t *testing.T) {
 	for _, tc := range testcases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			mockAPI := s3.New(unit.Session)
-
-			mockAPI.Handlers.Unmarshal.Clear()
-			mockAPI.Handlers.UnmarshalMeta.Clear()
-			mockAPI.Handlers.UnmarshalError.Clear()
-			mockAPI.Handlers.Send.Clear()
-
-			mockAPI.Handlers.Send.PushBack(func(r *request.Request) {
-				r.HTTPResponse = &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader("")),
-				}
-
-				params := r.Params
-				sse := valueAtPath(params, "ServerSideEncryption")
-				key := valueAtPath(params, "SSEKMSKeyId")
-
-				if !(sse == nil && tc.expectedSSE == "") {
-					assert.Equal(t, sse, tc.expectedSSE)
-				}
-				if !(key == nil && tc.expectedSSEKeyID == "") {
-					assert.Equal(t, key, tc.expectedSSEKeyID)
-				}
-
-				aclVal := valueAtPath(r.Params, "ACL")
-
-				if aclVal == nil && tc.expectedACL == "" {
-					return
-				}
-				assert.Equal(t, aclVal, tc.expectedACL)
-			})
-
+			var captured *manager.UploadInput
 			mockS3 := &S3{
-				uploader: s3manager.NewUploaderWithClient(mockAPI),
+				uploader: mockUploader{
+					UploadFn: func(ctx context.Context, input *manager.UploadInput, _ ...func(*manager.Uploader)) (*manager.UploadOutput, error) {
+						captured = input
+						return &manager.UploadOutput{}, nil
+					},
+				},
 			}
 
 			metadata := Metadata{}
@@ -842,6 +701,24 @@ func TestS3PutEncryptionRequest(t *testing.T) {
 			err = mockS3.Put(context.Background(), bytes.NewReader([]byte("")), u, metadata, 1, 5242880)
 			if err != nil {
 				t.Errorf("Expected %v, but received %q", nil, err)
+			}
+
+			if tc.expectedSSE == "" {
+				assert.Equal(t, types.ServerSideEncryption(""), captured.ServerSideEncryption)
+			} else {
+				assert.Equal(t, types.ServerSideEncryption(tc.expectedSSE), captured.ServerSideEncryption)
+			}
+
+			if tc.expectedSSEKeyID == "" {
+				assert.Equal(t, (*string)(nil), captured.SSEKMSKeyId)
+			} else {
+				assert.Equal(t, tc.expectedSSEKeyID, aws.ToString(captured.SSEKMSKeyId))
+			}
+
+			if tc.expectedACL == "" {
+				assert.Equal(t, types.ObjectCannedACL(""), captured.ACL)
+			} else {
+				assert.Equal(t, types.ObjectCannedACL(tc.expectedACL), captured.ACL)
 			}
 		})
 	}
@@ -863,16 +740,16 @@ func TestS3listObjectsV2(t *testing.T) {
 	mapReturnObjNameToModtime := map[string]time.Time{}
 	mapIgnoreObjNameToModtime := map[string]time.Time{}
 
-	s3objs := make([]*s3.Object, 0, numObjectsToIgnore+numObjectsToReturn)
+	s3objs := make([]types.Object, 0, numObjectsToIgnore+numObjectsToReturn)
 
 	for i := 0; i < numObjectsToReturn; i++ {
 		fname := fmt.Sprintf("%s/%d", pre, i)
 		now := time.Now()
 
 		mapReturnObjNameToModtime[pre+"/"+fname] = now
-		s3objs = append(s3objs, &s3.Object{
+		s3objs = append(s3objs, types.Object{
 			Key:          aws.String("key/" + fname),
-			LastModified: aws.Time(now),
+			LastModified: &now,
 		})
 	}
 
@@ -881,9 +758,9 @@ func TestS3listObjectsV2(t *testing.T) {
 		later := time.Now().Add(time.Second * 10)
 
 		mapIgnoreObjNameToModtime[pre+"/"+fname] = later
-		s3objs = append(s3objs, &s3.Object{
+		s3objs = append(s3objs, types.Object{
 			Key:          aws.String("key/" + fname),
-			LastModified: aws.Time(later),
+			LastModified: &later,
 		})
 	}
 
@@ -893,27 +770,15 @@ func TestS3listObjectsV2(t *testing.T) {
 		s3objs[i], s3objs[j] = s3objs[j], s3objs[i]
 	})
 
-	mockAPI := s3.New(unit.Session)
-
-	mockAPI.Handlers.Unmarshal.Clear()
-	mockAPI.Handlers.UnmarshalMeta.Clear()
-	mockAPI.Handlers.UnmarshalError.Clear()
-	mockAPI.Handlers.Send.Clear()
-
-	mockAPI.Handlers.Send.PushBack(func(r *request.Request) {
-		r.HTTPResponse = &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader("")),
-		}
-
-		r.Data = &s3.ListObjectsV2Output{
-			Contents: s3objs,
-		}
-	})
-
-	mockS3 := &S3{
-		api: mockAPI,
+	mockAPI := mockS3API{
+		ListObjectsV2Fn: func(ctx context.Context, params *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+			return &s3.ListObjectsV2Output{
+				Contents:    s3objs,
+				IsTruncated: aws.Bool(false),
+			}, nil
+		},
 	}
+	mockS3 := &S3{api: mockAPI}
 
 	ouputCh := mockS3.listObjectsV2(context.Background(), u)
 
@@ -938,7 +803,7 @@ func TestSessionCreateAndCachingWithDifferentBuckets(t *testing.T) {
 		{bucket: "test-bucket"},
 	}
 
-	sess := map[string]*session.Session{}
+	sess := map[string]aws.Config{}
 
 	for _, tc := range testcases {
 		awsSess, err := globalSessionCache.newSession(context.Background(), Options{
@@ -958,39 +823,26 @@ func TestSessionCreateAndCachingWithDifferentBuckets(t *testing.T) {
 }
 
 func TestSessionRegionDetection(t *testing.T) {
-	bucketRegion := "sa-east-1"
-
 	testcases := []struct {
 		name           string
-		bucket         string
 		optsRegion     string
 		envRegion      string
 		expectedRegion string
 	}{
 		{
 			name:           "RegionWithSourceRegionParameter",
-			bucket:         "bucket",
 			optsRegion:     "ap-east-1",
 			envRegion:      "ca-central-1",
 			expectedRegion: "ap-east-1",
 		},
 		{
 			name:           "RegionWithEnvironmentVariable",
-			bucket:         "bucket",
 			optsRegion:     "",
 			envRegion:      "ca-central-1",
 			expectedRegion: "ca-central-1",
 		},
 		{
-			name:           "RegionWithBucketRegion",
-			bucket:         "bucket",
-			optsRegion:     "",
-			envRegion:      "",
-			expectedRegion: bucketRegion,
-		},
-		{
 			name:           "DefaultRegion",
-			bucket:         "",
 			optsRegion:     "",
 			envRegion:      "",
 			expectedRegion: "us-east-1",
@@ -1000,20 +852,9 @@ func TestSessionRegionDetection(t *testing.T) {
 	// ignore local profile loading
 	os.Setenv("AWS_SDK_LOAD_CONFIG", "0")
 
-	// mock auto bucket detection
-	server := func() *httptest.Server {
-		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("X-Amz-Bucket-Region", bucketRegion)
-			w.WriteHeader(http.StatusOK)
-		}))
-	}()
-	defer server.Close()
-
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := Options{
-				Endpoint: server.URL,
-
 				// since profile loading disabled above, we need to provide
 				// credentials to the session. NoSignRequest could be used
 				// for anonymous credentials.
@@ -1029,10 +870,6 @@ func TestSessionRegionDetection(t *testing.T) {
 				defer os.Unsetenv("AWS_REGION")
 			}
 
-			if tc.bucket != "" {
-				opts.bucket = tc.bucket
-			}
-
 			globalSessionCache.clear()
 
 			sess, err := globalSessionCache.newSession(context.Background(), opts)
@@ -1040,113 +877,9 @@ func TestSessionRegionDetection(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			got := aws.StringValue(sess.Config.Region)
+			got := sess.Region
 			if got != tc.expectedRegion {
 				t.Fatalf("expected %v, got %v", tc.expectedRegion, got)
-			}
-		})
-	}
-}
-
-func TestSessionAutoRegionValidateCredentials(t *testing.T) {
-	awsSess := unit.Session
-	awsSess.Handlers.Unmarshal.Clear()
-	awsSess.Handlers.Send.Clear()
-	awsSess.Handlers.Send.PushBack(func(r *request.Request) {
-		header := http.Header{}
-		header.Set("X-Amz-Bucket-Region", "")
-		r.HTTPResponse = &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     header,
-		}
-
-		if r.Config.Credentials != awsSess.Config.Credentials {
-			t.Error("session credentials are expected to be used during HeadBucket request")
-		}
-	})
-
-	_ = setSessionRegion(context.Background(), awsSess, "bucket")
-}
-
-func TestSessionAutoRegion(t *testing.T) {
-	log.Init("error", false)
-
-	unitSession := func() *session.Session {
-		return session.Must(session.NewSession(&aws.Config{
-			Credentials: credentials.NewStaticCredentials("AKID", "SECRET", "SESSION"),
-			SleepDelay:  func(time.Duration) {},
-		}))
-	}
-
-	testcases := []struct {
-		name              string
-		bucket            string
-		region            string
-		status            int
-		expectedRegion    string
-		expectedErrorCode string
-	}{
-		{
-			name:           "NoLocationConstraint",
-			bucket:         "bucket",
-			region:         "",
-			status:         http.StatusOK,
-			expectedRegion: "us-east-1",
-		},
-		{
-			name:           "LocationConstraintDefaultRegion",
-			bucket:         "bucket",
-			region:         "us-east-1",
-			status:         http.StatusOK,
-			expectedRegion: "us-east-1",
-		},
-		{
-			name:           "LocationConstraintAnotherRegion",
-			bucket:         "bucket",
-			region:         "us-west-2",
-			status:         http.StatusOK,
-			expectedRegion: "us-west-2",
-		},
-		{
-			name:              "BucketNotFoundErrorMustFail",
-			bucket:            "bucket",
-			status:            http.StatusNotFound,
-			expectedRegion:    "us-east-1",
-			expectedErrorCode: "NotFound",
-		},
-		{
-			name:           "AccessDeniedErrorMustNotFail",
-			bucket:         "bucket",
-			status:         http.StatusForbidden,
-			expectedRegion: "us-east-1",
-		},
-	}
-
-	for _, tc := range testcases {
-		t.Run(tc.name, func(t *testing.T) {
-			awsSess := unitSession()
-			awsSess.Handlers.Unmarshal.Clear()
-			awsSess.Handlers.Send.Clear()
-			awsSess.Handlers.Send.PushBack(func(r *request.Request) {
-				header := http.Header{}
-				if tc.region != "" {
-					header.Set("X-Amz-Bucket-Region", tc.region)
-				}
-				r.HTTPResponse = &http.Response{
-					StatusCode: tc.status,
-					Header:     header,
-					Body:       io.NopCloser(strings.NewReader("")),
-				}
-			})
-
-			err := setSessionRegion(context.Background(), awsSess, tc.bucket)
-			if tc.expectedErrorCode != "" && !errHasCode(err, tc.expectedErrorCode) {
-				t.Errorf("expected error code: %v, got error: %v", tc.expectedErrorCode, err)
-				return
-			}
-
-			if expected, got := tc.expectedRegion, aws.StringValue(awsSess.Config.Region); expected != got {
-				t.Errorf("expected: %v, got: %v", expected, got)
 			}
 		})
 	}
@@ -1158,47 +891,43 @@ func TestS3ListObjectsAPIVersions(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	mockAPI := s3.New(unit.Session)
-	mockS3 := &S3{api: mockAPI}
-
-	mockAPI.Handlers.Send.Clear()
-	mockAPI.Handlers.Unmarshal.Clear()
-	mockAPI.Handlers.UnmarshalMeta.Clear()
-	mockAPI.Handlers.ValidateResponse.Clear()
-
 	t.Run("list-objects-v2", func(t *testing.T) {
-		var got interface{}
-		mockAPI.Handlers.ValidateResponse.PushBack(func(r *request.Request) {
-			got = r.Data
-		})
+		calledV2 := 0
+		mockAPI := mockS3API{
+			ListObjectsV2Fn: func(ctx context.Context, params *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+				calledV2++
+				return &s3.ListObjectsV2Output{IsTruncated: aws.Bool(false)}, nil
+			},
+		}
+		mockS3 := &S3{api: mockAPI}
 
 		ctx := context.Background()
 		mockS3.useListObjectsV1 = false
 		for range mockS3.List(ctx, url, false) {
 		}
 
-		expected := &s3.ListObjectsV2Output{}
-
-		if reflect.TypeOf(expected) != reflect.TypeOf(got) {
-			t.Errorf("expected %T, got: %T", expected, got)
+		if calledV2 == 0 {
+			t.Errorf("expected listObjectsV2 to be called")
 		}
 	})
 
 	t.Run("list-objects-v1", func(t *testing.T) {
-		var got interface{}
-		mockAPI.Handlers.ValidateResponse.PushBack(func(r *request.Request) {
-			got = r.Data
-		})
+		calledV1 := 0
+		mockAPI := mockS3API{
+			ListObjectsFn: func(ctx context.Context, params *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+				calledV1++
+				return &s3.ListObjectsOutput{IsTruncated: aws.Bool(false)}, nil
+			},
+		}
+		mockS3 := &S3{api: mockAPI}
 
 		ctx := context.Background()
 		mockS3.useListObjectsV1 = true
 		for range mockS3.List(ctx, url, false) {
 		}
 
-		expected := &s3.ListObjectsOutput{}
-
-		if reflect.TypeOf(expected) != reflect.TypeOf(got) {
-			t.Errorf("expected %T, got: %T", expected, got)
+		if calledV1 == 0 {
+			t.Errorf("expected listObjectsV1 to be called")
 		}
 	})
 }
@@ -1207,12 +936,12 @@ func TestAWSLogLevel(t *testing.T) {
 	testcases := []struct {
 		name     string
 		level    string
-		expected aws.LogLevelType
+		expected aws.ClientLogMode
 	}{
 		{
-			name:     "Trace: log level must be aws.LogDebug",
+			name:     "Trace: log level must enable request/response logging",
 			level:    "trace",
-			expected: aws.LogDebug,
+			expected: aws.LogRequestWithBody | aws.LogResponseWithBody,
 		},
 		{
 			name:     "Debug: log level must be aws.LogOff",
@@ -1241,7 +970,7 @@ func TestAWSLogLevel(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			cfgLogLevel := *sess.Config.LogLevel
+			cfgLogLevel := sess.ClientLogMode
 			if diff := cmp.Diff(cfgLogLevel, tc.expected); diff != "" {
 				t.Errorf("%s: (-want +got):\n%v", tc.name, diff)
 			}
@@ -1274,26 +1003,12 @@ func TestS3HeadObject(t *testing.T) {
 				t.Errorf("unexpected error: %v", err)
 			}
 
-			mockAPI := s3.New(unit.Session)
+			mockAPI := mockS3API{
+				HeadObjectFn: func(ctx context.Context, params *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
+					return &s3.HeadObjectOutput{}, nil
+				},
+			}
 			mockS3 := &S3{api: mockAPI}
-
-			mockAPI.Handlers.Send.Clear()
-			mockAPI.Handlers.Unmarshal.Clear()
-			mockAPI.Handlers.UnmarshalMeta.Clear()
-			mockAPI.Handlers.ValidateResponse.Clear()
-
-			mockAPI.Handlers.Send.PushBack(func(r *request.Request) {
-				r.HTTPResponse = &http.Response{
-					StatusCode: http.StatusOK,
-					Body:       io.NopCloser(strings.NewReader("")),
-				}
-			})
-
-			mockAPI.Handlers.ValidateResponse.PushBack(func(r *request.Request) {
-				if r.Error != nil {
-					t.Errorf("unexpected error: %v", r.Error)
-				}
-			})
 
 			_, _, err = mockS3.HeadObject(context.Background(), u)
 			if err != nil {
@@ -1302,42 +1017,3 @@ func TestS3HeadObject(t *testing.T) {
 		})
 	}
 }
-
-func valueAtPath(i interface{}, s string) interface{} {
-	v, err := awsutil.ValuesAtPath(i, s)
-	if err != nil || len(v) == 0 {
-		return nil
-	}
-	if _, ok := v[0].(io.Reader); ok {
-		return v[0]
-	}
-
-	if rv := reflect.ValueOf(v[0]); rv.Kind() == reflect.Ptr {
-		return rv.Elem().Interface()
-	}
-
-	return v[0]
-}
-
-// tempError is a wrapper error type that implements anonymous
-// interface getting checked in url.Error.Temporary;
-//
-//	interface { Temporary() bool }
-//
-// see: https://github.com/golang/go/blob/2ebe77a2fda1ee9ff6fd9a3e08933ad1ebaea039/src/net/url/url.go#L38-L43
-//
-// AWS SDK checks if the underlying error in received url.Error implements it;
-// see: https://github.com/aws/aws-sdk-go/blob/b8fe768e4ce7f8f7c002bd7b27f4f5a8723fb1a5/aws/request/retryer.go#L191-L208
-//
-// It's used to mimic errors like tls.permanentError that would
-// be received in a url.Error when the connection timed out.
-type tempError struct {
-	err  error
-	temp bool
-}
-
-func (e tempError) Error() string { return e.err.Error() }
-
-func (e tempError) Temporary() bool { return e.temp }
-
-func (e *tempError) Unwrap() error { return e.err }

@@ -283,11 +283,11 @@ func TestHeadObjectWithMetadata(t *testing.T) {
 	bucket := s3BucketFromTestName(t)
 	createBucket(t, s3client, bucket)
 
-	metadata := make(map[string]*string)
+	metadata := make(map[string]string)
 	value := "value1"
 	value2 := "value2"
-	metadata["key1"] = &value
-	metadata["key2"] = &value2
+	metadata["key1"] = value
+	metadata["key2"] = value2
 
 	putFile(t, s3client, bucket, "file.txt", "content", putArbitraryMetadata(metadata))
 
@@ -312,10 +312,10 @@ func TestHeadObjectJSONMetadata(t *testing.T) {
 	bucket := s3BucketFromTestName(t)
 	createBucket(t, s3client, bucket)
 
-	metadata := make(map[string]*string)
+	metadata := make(map[string]string)
 	value := "value1"
 
-	metadata["key1"] = &value
+	metadata["key1"] = value
 
 	putFile(t, s3client, bucket, "file.txt", "content", putArbitraryMetadata(metadata))
 
