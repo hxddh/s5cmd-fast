@@ -1,4 +1,9 @@
 # Changelog
+## v2.4.0 - 31 Jan 2026
+
+#### Improvements
+- Migrated the S3 integration to AWS SDK for Go v2 for the latest stable APIs and continued maintenance support.
+
 ## v2.3.0 - 16 Dec 2024
 
 #### Breaking changes

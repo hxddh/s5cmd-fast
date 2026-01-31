@@ -607,7 +607,7 @@ If the `SHA256` checksum mismatches, you will see an error like the one below.
 * **Checksums:** If you enable `Signature Version 4` in your `~/.aws/config` file, `aws-cli` will only check the `SHA256` checksum of a file  while `s5cmd` will check both the `MD5` and `SHA256` checksums.
 
 **Sources:**
-- [AWS Go SDK](https://github.com/aws/aws-sdk-go/blob/b75b2a7b3cb40ece5774ed07dde44903481a2d4d/service/s3/customizations.go#L56)
+- [AWS SDK for Go v2](https://github.com/aws/aws-sdk-go-v2/blob/main/service/s3/README.md)
 - [AWS CLI Docs](https://docs.aws.amazon.com/cli/latest/topic/s3-faq.html)
 - [AWS S3 Docs](https://aws.amazon.com/getting-started/hands-on/amazon-s3-with-additional-checksums/)
 
