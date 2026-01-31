@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/fs"
 	"gotest.tools/v3/icmd"
@@ -405,9 +404,9 @@ func TestPipeToS3WithArbitraryMetadata(t *testing.T) {
 	)
 
 	// build assert map
-	metadata := map[string]*string{
-		"Key1": aws.String("foo"),
-		"Key2": aws.String("bar"),
+	metadata := map[string]string{
+		"Key1": "foo",
+		"Key2": "bar",
 	}
 
 	reader := bytes.NewBufferString(content)

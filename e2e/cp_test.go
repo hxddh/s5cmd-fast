@@ -34,7 +34,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"gotest.tools/v3/assert"
 	"gotest.tools/v3/fs"
 	"gotest.tools/v3/icmd"
@@ -821,9 +820,9 @@ func TestCopySingleFileToS3WithArbitraryMetadata(t *testing.T) {
 	)
 
 	// build assert map
-	metadata := map[string]*string{
-		"Key1": aws.String("foo"),
-		"Key2": aws.String("bar"),
+	metadata := map[string]string{
+		"Key1": "foo",
+		"Key2": "bar",
 	}
 	workdir := fs.NewDir(t, bucket, fs.WithFile(filename, content))
 	defer workdir.Remove()
@@ -861,14 +860,14 @@ func TestCopyS3ToS3WithArbitraryMetadataWithDefaultDirective(t *testing.T) {
 	)
 
 	// build assert map
-	srcmetadata := map[string]*string{
-		"Key1": aws.String("value1"),
-		"Key2": aws.String("value2"),
+	srcmetadata := map[string]string{
+		"Key1": "value1",
+		"Key2": "value2",
 	}
 
-	dstmetadata := map[string]*string{
-		"Key1": aws.String("foo"),
-		"Key2": aws.String("bar"),
+	dstmetadata := map[string]string{
+		"Key1": "foo",
+		"Key2": "bar",
 	}
 
 	srcpath := fmt.Sprintf("s3://%v/%v", bucket, filename)
@@ -901,14 +900,14 @@ func TestCopyS3ToS3WithArbitraryMetadataWithReplaceDirective(t *testing.T) {
 	)
 
 	// build assert map
-	srcmetadata := map[string]*string{
-		"Key1": aws.String("value1"),
-		"Key2": aws.String("value2"),
+	srcmetadata := map[string]string{
+		"Key1": "value1",
+		"Key2": "value2",
 	}
 
-	dstmetadata := map[string]*string{
-		"Key1": aws.String("foo"),
-		"Key2": aws.String("bar"),
+	dstmetadata := map[string]string{
+		"Key1": "foo",
+		"Key2": "bar",
 	}
 
 	srcpath := fmt.Sprintf("s3://%v/%v", bucket, filename)
